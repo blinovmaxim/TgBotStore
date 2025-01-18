@@ -7,11 +7,31 @@ import os
 from typing import Optional
 import random
 import logging
+import re
 
 router = Router()
 
 # Хранилище для текущего товара
 current_product: Optional[Product] = None
+
+def format_description(description: str, max_length: int = 800) -> str:
+    """Форматирует описание товара с учетом лимита Telegram"""
+    # Разбиваем на предложения
+    sentences = re.split(r'(?<=[.!?])\s+', description)
+    
+    formatted_text = ''
+    current_length = 0
+    
+    for sentence in sentences:
+        # Проверяем, не превысит ли добавление предложения лимит
+        if current_length + len(sentence) > max_length:
+            if formatted_text:
+                formatted_text = formatted_text.strip()
+            break
+        formatted_text += sentence + ' '
+        current_length += len(sentence) + 1
+        
+    return formatted_text.strip()
 
 @router.message(F.text == "📦 Випадковий товар")
 async def button_random_product(message: types.Message):
@@ -21,6 +41,7 @@ async def button_random_product(message: types.Message):
 async def show_random_product(message: types.Message):
     try:
         products = read_products()
+
         available_products = [p for p in products if p.stock == 'instock']
         
         if not available_products:
@@ -33,9 +54,7 @@ async def show_random_product(message: types.Message):
         text = f"📦 {product.name}\n\n"
         text += f"💰 Ціна: {product.retail_price} грн\n"
         
-        description = product.description[:300]
-        if len(product.description) > 300:
-            description += "..."
+        description = format_description(product.description)
         
         text += f"📝 Опис:\n{description}\n\n"
         text += f"🏷 Категорія: {product.category} / {product.subcategory}\n"
@@ -76,9 +95,7 @@ async def post_product(callback: types.CallbackQuery):
         text = f"📦 {current_product.name}\n\n"
         text += f"💰 Ціна: {current_product.retail_price} грн\n"
         
-        description = current_product.description[:300]
-        if len(current_product.description) > 300:
-            description += "..."
+        description = format_description(current_product.description)
         
         text += f"📝 Опис:\n{description}\n\n"
         text += f"🏷 Категорія: {current_product.category} / {current_product.subcategory}\n"

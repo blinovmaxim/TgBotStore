@@ -5,7 +5,7 @@ import html
 import re
 import os
 import logging
-
+from functools import lru_cache
 
 @dataclass
 class Product:
@@ -21,9 +21,21 @@ class Product:
 
 def clean_html(raw_html: str) -> str:
     """Очищает HTML-теги и форматирует текст"""
-    cleanr = re.compile('<.*?>')
-    text = re.sub(cleanr, '', raw_html)
-    return html.unescape(text).replace('\n\n', '\n').strip()
+    try:
+        # Очищаем HTML
+        cleanr = re.compile('<.*?>')
+        text = re.sub(cleanr, '', raw_html)
+        text = html.unescape(text).strip()
+        
+        # Форматируем текст
+        text = re.sub(r'\s+', ' ', text)  # Убираем лишние пробелы
+        text = text.replace('\n\n', '\n').strip()
+        
+        return text
+        
+    except Exception as e:
+        logging.error(f"Ошибка при обработке описания: {str(e)}")
+        return raw_html
 
 def parse_price(price_str: str) -> float:
     """Парсит строку цены в число"""
@@ -59,19 +71,19 @@ def parse_images(images_raw: str) -> List[str]:
         return []
         
     images_raw = images_raw.strip(' "\'')
-    images = []
     
-    # Определяем разделитель
-    for delimiter in ['","', ',', ';']:
+    # Проверяем разные разделители
+    delimiters = [',', ';', '|']
+    for delimiter in delimiters:
         if delimiter in images_raw:
-            images = [url.strip(' "\'') for url in images_raw.split(delimiter)]
-            break
-    else:
-        images = [images_raw]
-        
-    return [url for url in images if url.startswith(('http://', 'https://'))]
+            return [url.strip() for url in images_raw.split(delimiter) if url.strip()]
+            
+    # Если разделителей нет, возвращаем как одну ссылку
+    return [images_raw] if images_raw else []
 
+@lru_cache(maxsize=1)
 def read_products(filename: str = None) -> List[Product]:
+    """Читает товары из CSV файла"""
     try:
         if not filename:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
