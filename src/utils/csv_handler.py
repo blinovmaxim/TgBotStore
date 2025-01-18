@@ -6,6 +6,7 @@ import re
 import os
 import logging
 
+
 @dataclass
 class Product:
     name: str
@@ -79,77 +80,67 @@ def read_products(filename: str = None) -> List[Product]:
         if not os.path.exists(filename):
             logging.error(f"Файл {filename} не знайдено")
             return []
-            
-        products = []
-        skipped_empty = 0
-        skipped_no_name = 0
-        skipped_no_price = 0
-        error_count = 0
+
+        # Пробуем разные кодировки
+        encodings = ['utf-8', 'windows-1251']
         
-        with open(filename, 'r', encoding='utf-8-sig') as file:
-            total_lines = sum(1 for line in file)
-            file.seek(0)
-            
-            reader = csv.DictReader(file, delimiter=',')
-            headers = reader.fieldnames
-            logging.info(f"Заголовки CSV: {headers}")
-            
-            for row in reader:
-                try:
-                    # Проверяем валидность строки
-                    if not row or not any(row.values()):
-                        skipped_empty += 1
+        for encoding in encodings:
+            try:
+                products = []
+                with open(filename, 'r', encoding=encoding, errors='ignore') as file:
+                    reader = csv.DictReader(file, delimiter=',')
+                    
+                    # Проверяем валидность первой строки
+                    if not reader.fieldnames or 'Название товара' not in reader.fieldnames:
                         continue
                         
-                    name = row.get('Название товара', '').strip(' "\'')
-                    if not name:
-                        skipped_no_name += 1
-                        continue
+                    for row in reader:
+                        required_fields = {
+                            'Название товара': '',
+                            'Артикул': '',
+                            'Описание товара': '',
+                            'Дроп цена для партнера': '0',
+                            'Рекомендовання розничная цена': '0',
+                            'Наличие': '',
+                            'Изображения': '',
+                            'Категории товара': '',
+                            'Подкатегории': ''
+                        }
                         
-                    # Проверяем цену более тщательно
-                    price_str = row.get('Рекомендовання розничная цена', '').strip(' "\'')
-                    if not price_str:
-                        skipped_no_price += 1
-                        continue
+                        for field, default in required_fields.items():
+                            if field not in row or row[field] is None:
+                                row[field] = default
                         
-                    try:
-                        retail_price = float(price_str.replace(',', '.').replace(' ', ''))
-                        if retail_price <= 0:
-                            skipped_no_price += 1
+                        name = row['Название товара'].strip()
+                        if not name:
                             continue
-                    except ValueError:
-                        skipped_no_price += 1
-                        continue
-                        
-                    product = Product(
-                        name=name,
-                        article=row.get('Артикул', '').strip(' "\''),
-                        description=clean_html(row.get('Описание товара', '').strip(' "\'')),
-                        drop_price=parse_price(row.get('Дроп цена для партнера')),
-                        retail_price=retail_price,
-                        stock=parse_stock(row.get('Наличие')),
-                        images=parse_images(row.get('Изображения')),
-                        category=row.get('Категории товара', '').strip(' "\''),
-                        subcategory=row.get('Подкатегории', '').strip(' "\'')
-                    )
+                            
+                        product = Product(
+                            name=name,
+                            article=row['Артикул'].strip(),
+                            description=clean_html(row['Описание товара']),
+                            drop_price=parse_price(row['Дроп цена для партнера']),
+                            retail_price=parse_price(row['Рекомендовання розничная цена']),
+                            stock=parse_stock(row['Наличие']),
+                            images=parse_images(row['Изображения']),
+                            category=row['Категории товара'].strip(),
+                            subcategory=row['Подкатегории'].strip()
+                        )
+                        products.append(product)
                     
-                    products.append(product)
-                        
-                except Exception as e:
-                    error_count += 1
-                    logging.error(f"Помилка при обробці рядка: {str(e)}")
-                    continue
+                    logging.info(f"Файл успешно прочитан с кодировкой {encoding}, загружено {len(products)} товаров")
+                    return products
                     
-        logging.info(f"Всього рядків у файлі: {total_lines}")
-        logging.info(f"Пропущено пустих рядків: {skipped_empty}")
-        logging.info(f"Пропущено без назви: {skipped_no_name}")
-        logging.info(f"Пропущено без ціни: {skipped_no_price}")
-        logging.info(f"Помилок обробки: {error_count}")
-        logging.info(f"Успішно оброблено товарів: {len(products)}")
-        logging.info(f"Товарів в наявності: {len([p for p in products if p.stock == 'instock'])}")
-        
-        return products
+            except UnicodeDecodeError:
+                logging.warning(f"Не удалось прочитать файл с кодировкой {encoding}, пробуем следующую")
+                continue
+            except Exception as e:
+                logging.error(f"Ошибка при чтении файла с кодировкой {encoding}: {str(e)}")
+                continue
+                
+        logging.error("Не удалось прочитать файл ни с одной из доступных кодировок")
+        return []
         
     except Exception as e:
-        logging.error(f"Помилка при читанні файлу {filename}: {str(e)}")
+        logging.error(f"Общая ошибка: {str(e)}")
         return [] 
