@@ -217,7 +217,7 @@ async def auto_posting():
         except Exception as e:
             logging.error(f"Ошибка автопостинга: {str(e)}")
             
-        await asyncio.sleep(120)  # Меняем на 2 минуты (120 секунд)
+        await asyncio.sleep(600)  # Меняем на 10 минут (600 секунд)
 
 async def check_and_delete_outdated_posts():
     """Проверяет и удаляет посты с товарами не в наличии"""
@@ -267,7 +267,7 @@ async def main():
         file_updater = FileUpdater(
             url="https://websklad.biz.ua/wp-content/uploads/ExportWebskladCSV.csv",
             local_path="src/ExportWebskladCSV.csv",
-            update_interval=172800
+            update_interval=120
         )
         
         tasks = [

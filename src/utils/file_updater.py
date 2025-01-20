@@ -6,12 +6,12 @@ from datetime import datetime, timedelta
 import hashlib
 
 class FileUpdater:
-    def __init__(self, url: str, local_path: str, update_interval: int = 3600):
+    def __init__(self, url: str, local_path: str, update_interval: int = 120):
         """
         url: URL файла на сайте поставщика
         local_path: путь к локальному файлу
-        update_interval: интервал обновления в секундах (по умолчанию 1 час)
-        """
+        update_interval: интервал обновления в секундах (по умолчанию 10 минут)
+        """ 
         self.url = url
         self.local_path = local_path
         self.update_interval = update_interval
