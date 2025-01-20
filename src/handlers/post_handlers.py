@@ -4,15 +4,27 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from utils.csv_handler import read_products, Product
 import os
-from typing import Optional
+from typing import Optional, List
 import random
 import logging
 import re
+from utils.price_tracker import PriceTracker
+from utils.crm_handler import LpCrmAPI
+import asyncio
 
 router = Router()
 
-# Хранилище для текущего товара
-current_product: Optional[Product] = None
+class ProductState:
+    def __init__(self):
+        self.current_product: Optional[Product] = None
+
+product_state = ProductState()
+
+# Инициализируем трекер цен
+price_tracker = PriceTracker()
+
+# Инициализируем API
+crm_api = LpCrmAPI()
 
 def format_description(description: str, max_length: int = 800) -> str:
     """Форматирует описание товара с учетом лимита Telegram"""
@@ -49,6 +61,7 @@ async def show_random_product(message: types.Message):
             return
             
         product = random.choice(available_products)
+        product_state.current_product = product
         
         # Формируем текст поста
         text = f"📦 {product.name}\n\n"
@@ -57,7 +70,6 @@ async def show_random_product(message: types.Message):
         description = format_description(product.description)
         
         text += f"📝 Опис:\n{description}\n\n"
-        text += f"🏷 Категорія: {product.category} / {product.subcategory}\n"
         text += f"📦 Наявність: {'В наявності' if product.stock == 'instock' else 'Немає в наявності'}"
         
         keyboard = types.InlineKeyboardMarkup(
@@ -65,9 +77,6 @@ async def show_random_product(message: types.Message):
                 [types.InlineKeyboardButton(text="📤 Опублікувати", callback_data="post_product")]
             ]
         )
-        
-        global current_product
-        current_product = product
         
         if product.images:
             media = []
@@ -87,57 +96,112 @@ async def show_random_product(message: types.Message):
 @router.callback_query(F.data == "post_product")
 async def post_product(callback: types.CallbackQuery):
     try:
-        if not current_product:
-            await callback.answer("❌ Товар не знайдено, спробуйте ще раз", show_alert=True)
+        if not product_state.current_product:
+            await callback.answer("❌ Товар не знайдено", show_alert=True)
             return
             
-        # Формируем текст поста
-        text = f"📦 {current_product.name}\n\n"
-        text += f"💰 Ціна: {current_product.retail_price} грн\n"
+        # Отправляем данные в CRM
+        product_data = {
+            'name': product_state.current_product.name,
+            'article': product_state.current_product.article,
+            'price': product_state.current_product.retail_price,
+            'category': product_state.current_product.category,
+            'description': product_state.current_product.description
+        }
         
-        description = format_description(current_product.description)
+        # Отправляем в CRM
+        crm_result = await crm_api.send_order_to_crm(product_data)
+        if crm_result:
+            logging.info(f"Заказ успешно создан в CRM: {crm_result}")
+            
+        # Создаем заказ в CRM
+        product_data = {
+            'name': product_state.current_product.name,
+            'article': product_state.current_product.article,
+            'price': product_state.current_product.retail_price,
+            'category': product_state.current_product.category,
+            'description': product_state.current_product.description
+        }
+        
+        await crm_api.create_order(product_data)
+        
+        # Проверяем изменение цены
+        price_diff = price_tracker.check_price_change(
+            product_state.current_product.article, 
+            product_state.current_product.retail_price
+        )
+        
+        # Формируем текст поста
+        text = f"📦 {product_state.current_product.name}\n\n"
+        
+        # Показываем скидку только если разница больше 100 грн
+        if price_diff and price_diff >= 100:
+            text += f"🔥 ЗНИЖКА! Стара ціна: {product_state.current_product.retail_price + price_diff} грн\n"
+            text += f"💰 Нова ціна: {product_state.current_product.retail_price} грн\n"
+            text += f"📉 Економія: {price_diff} грн!\n\n"
+        else:
+            text += f"💰 Ціна: {product_state.current_product.retail_price} грн\n"
+        
+        description = format_description(product_state.current_product.description)
         
         text += f"📝 Опис:\n{description}\n\n"
-        text += f"🏷 Категорія: {current_product.category} / {current_product.subcategory}\n"
-        text += f"📦 Наявність: {'В наявності' if current_product.stock == 'instock' else 'Немає в наявності'}"
+        text += f"📦 Наявність: {'В наявності' if product_state.current_product.stock == 'instock' else 'Немає в наявності'}"
         
         # Проверяем и фильтруем URL изображений
         valid_images = []
-        if current_product.images:
-            for url in current_product.images[:10]:
+        if product_state.current_product.images:
+            for url in product_state.current_product.images[:10]:
                 if url.startswith(('http://', 'https://')):
                     # Удаляем пробелы и кавычки
                     clean_url = url.strip(' "\'\t\n\r')
                     valid_images.append(clean_url)
         
+        # Добавляем кнопку заказа
+        keyboard = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [types.InlineKeyboardButton(
+                    text="🛍 Замовити", 
+                    callback_data=f"order_{product_state.current_product.article}"
+                )]
+            ]
+        )
+        
         # Отправляем в канал
         if valid_images:
             try:
-                media = []
-                for image_url in valid_images:
-                    media.append(types.InputMediaPhoto(
-                        media=image_url,
-                        caption=text if len(media) == 0 else None
-                    ))
-                await callback.bot.send_media_group(
+                # Отправляем первое фото с текстом и кнопкой
+                await callback.bot.send_photo(
                     chat_id=os.getenv('CHANNEL_ID'),
-                    media=media
+                    photo=valid_images[0],
+                    caption=text,
+                    reply_markup=keyboard,
+                    parse_mode='HTML'
                 )
+                
+                # Если есть дополнительные фото, отправляем их группой
+                if len(valid_images) > 1:
+                    media = [types.InputMediaPhoto(media=url) for url in valid_images[1:]]
+                    await callback.bot.send_media_group(
+                        chat_id=os.getenv('CHANNEL_ID'),
+                        media=media
+                    )
+                    
             except Exception as img_error:
                 logging.error(f"Ошибка при отправке изображений: {str(img_error)}")
-                # Если не удалось отправить с изображениями, отправляем только текст
                 await callback.bot.send_message(
                     chat_id=os.getenv('CHANNEL_ID'),
-                    text=text
+                    text=text,
+                    reply_markup=keyboard
                 )
         else:
             await callback.bot.send_message(
                 chat_id=os.getenv('CHANNEL_ID'),
-                text=text
+                text=text,
+                reply_markup=keyboard
             )
         
         await callback.answer("✅ Товар опублікований в каналі!")
-        current_product = None
+        product_state.current_product = None
         
     except Exception as e:
         logging.error(f"Ошибка при публикации: {str(e)}")

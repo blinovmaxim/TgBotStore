@@ -81,70 +81,70 @@ def parse_images(images_raw: str) -> List[str]:
     # Если разделителей нет, возвращаем как одну ссылку
     return [images_raw] if images_raw else []
 
+def calculate_retail_price(drop_price: float, retail_price: float) -> float:
+    """Рассчитывает розничную цену на основе правил"""
+    price_difference = retail_price - drop_price
+    
+    if price_difference < 500:
+        return round(drop_price + 500)  # Округляем до целого числа
+    else:
+        return round(retail_price + 200)  # Округляем до целого числа
+
 @lru_cache(maxsize=1)
 def read_products(filename: str = None) -> List[Product]:
     """Читает товары из CSV файла"""
     try:
         if not filename:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            filename = os.getenv('CSV_FILE', os.path.join(base_dir, 'ExportWebskladCSV.csv'))
+            filename = os.getenv('CSV_FILE', os.path.join(base_dir,'ExportWebskladCSV.csv'))
             
         if not os.path.exists(filename):
             logging.error(f"Файл {filename} не знайдено")
             return []
 
-        # Пробуем разные кодировки
+        products = []
         encodings = ['utf-8', 'windows-1251']
         
         for encoding in encodings:
             try:
-                products = []
                 with open(filename, 'r', encoding=encoding, errors='ignore') as file:
                     reader = csv.DictReader(file, delimiter=',')
                     
-                    # Проверяем валидность первой строки
                     if not reader.fieldnames or 'Название товара' not in reader.fieldnames:
                         continue
                         
                     for row in reader:
-                        required_fields = {
-                            'Название товара': '',
-                            'Артикул': '',
-                            'Описание товара': '',
-                            'Дроп цена для партнера': '0',
-                            'Рекомендовання розничная цена': '0',
-                            'Наличие': '',
-                            'Изображения': '',
-                            'Категории товара': '',
-                            'Подкатегории': ''
-                        }
-                        
-                        for field, default in required_fields.items():
-                            if field not in row or row[field] is None:
-                                row[field] = default
-                        
-                        name = row['Название товара'].strip()
-                        if not name:
+                        # Безопасное получение значений с проверкой на None
+                        name = (row.get('Название товара') or '').strip()
+                        if not name:  # Пропускаем товары без названия
                             continue
                             
+                        category = (row.get('Категории товара') or '').strip()
+                        if category and 'электронк' in category.lower():
+                            continue
+                            
+                        drop_price = parse_price(row.get('Дроп цена для партнера'))
+                        retail_price = parse_price(row.get('Рекомендовання розничная цена'))
+                        calculated_price = calculate_retail_price(drop_price, retail_price)
+
                         product = Product(
                             name=name,
-                            article=row['Артикул'].strip(),
-                            description=clean_html(row['Описание товара']),
-                            drop_price=parse_price(row['Дроп цена для партнера']),
-                            retail_price=parse_price(row['Рекомендовання розничная цена']),
-                            stock=parse_stock(row['Наличие']),
-                            images=parse_images(row['Изображения']),
-                            category=row['Категории товара'].strip(),
-                            subcategory=row['Подкатегории'].strip()
+                            article=(row.get('Артикул') or '').strip(),
+                            description=clean_html(row.get('Описание товара') or ''),
+                            drop_price=drop_price,
+                            retail_price=calculated_price,
+                            stock=parse_stock(row.get('Наличие') or ''),
+                            images=parse_images(row.get('Изображения') or ''),
+                            category=category,
+                            subcategory=(row.get('Подкатегории') or '').strip()
                         )
                         products.append(product)
                     
-                    logging.info(f"Файл успешно прочитан с кодировкой {encoding}, загружено {len(products)} товаров")
-                    return products
+                    if products:  # Возвращаем только если есть товары
+                        logging.info(f"Файл успешно прочитан с кодировкой {encoding}, загружено {len(products)} товаров")
+                        return products
                     
             except UnicodeDecodeError:
-                logging.warning(f"Не удалось прочитать файл с кодировкой {encoding}, пробуем следующую")
                 continue
             except Exception as e:
                 logging.error(f"Ошибка при чтении файла с кодировкой {encoding}: {str(e)}")
@@ -154,5 +154,5 @@ def read_products(filename: str = None) -> List[Product]:
         return []
         
     except Exception as e:
-        logging.error(f"Общая ошибка: {str(e)}")
+        logging.error(f"Критическая ошибка при чтении файла: {str(e)}")
         return [] 
