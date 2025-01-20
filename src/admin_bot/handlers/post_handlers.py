@@ -2,15 +2,17 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from utils.csv_handler import read_products, Product
+from shared.utils.csv_handler import read_products, Product
+from shared.utils.price_tracker import PriceTracker
 import os
 from typing import Optional, List
 import random
 import logging
 import re
-from utils.price_tracker import PriceTracker
-from utils.crm_handler import LpCrmAPI
+
+from shared.utils.crm_handler import LpCrmAPI
 import asyncio
+from shared.config import Config
 
 router = Router()
 
@@ -114,17 +116,6 @@ async def post_product(callback: types.CallbackQuery):
         if crm_result:
             logging.info(f"Заказ успешно создан в CRM: {crm_result}")
             
-        # Создаем заказ в CRM
-        product_data = {
-            'name': product_state.current_product.name,
-            'article': product_state.current_product.article,
-            'price': product_state.current_product.retail_price,
-            'category': product_state.current_product.category,
-            'description': product_state.current_product.description
-        }
-        
-        await crm_api.create_order(product_data)
-        
         # Проверяем изменение цены
         price_diff = price_tracker.check_price_change(
             product_state.current_product.article, 
@@ -171,7 +162,7 @@ async def post_product(callback: types.CallbackQuery):
             try:
                 # Отправляем первое фото с текстом и кнопкой
                 await callback.bot.send_photo(
-                    chat_id=os.getenv('CHANNEL_ID'),
+                    chat_id=Config.CHANNEL_ID,
                     photo=valid_images[0],
                     caption=text,
                     reply_markup=keyboard,
@@ -182,20 +173,20 @@ async def post_product(callback: types.CallbackQuery):
                 if len(valid_images) > 1:
                     media = [types.InputMediaPhoto(media=url) for url in valid_images[1:]]
                     await callback.bot.send_media_group(
-                        chat_id=os.getenv('CHANNEL_ID'),
+                        chat_id=Config.CHANNEL_ID,
                         media=media
                     )
                     
             except Exception as img_error:
                 logging.error(f"Ошибка при отправке изображений: {str(img_error)}")
                 await callback.bot.send_message(
-                    chat_id=os.getenv('CHANNEL_ID'),
+                    chat_id=Config.CHANNEL_ID,
                     text=text,
                     reply_markup=keyboard
                 )
         else:
             await callback.bot.send_message(
-                chat_id=os.getenv('CHANNEL_ID'),
+                chat_id=Config.CHANNEL_ID,
                 text=text,
                 reply_markup=keyboard
             )

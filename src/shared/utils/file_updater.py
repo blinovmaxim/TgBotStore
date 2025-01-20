@@ -61,14 +61,11 @@ class FileUpdater:
         
         return datetime.now() - file_datetime > timedelta(seconds=self.update_interval)
     
-    async def check_updates(self) -> None:
-        """Проверяет необходимость обновления файла"""
+    async def check_updates(self):
         while True:
             try:
                 if await self.should_update():
                     await self.download_file()
-                    
             except Exception as e:
                 logging.error(f"Ошибка при проверке обновлений: {str(e)}")
-                
-            await asyncio.sleep(self.update_interval) 
+            await asyncio.sleep(60)  # Проверяем каждую минуту 

@@ -2,14 +2,12 @@ import aiohttp
 import logging
 import os
 from typing import Dict, Optional
-from dotenv import load_dotenv
-
-load_dotenv()
+from shared.config import Config
 
 class LpCrmAPI:
     def __init__(self):
-        self.api_key = os.getenv('LP_CRM_API_KEY')
-        self.domain = os.getenv('LP_CRM_DOMAIN', 'openpike.lp-crm.biz')
+        self.api_key = Config.CRM_API_KEY
+        self.domain = Config.CRM_DOMAIN
         self.base_url = f'http://{self.domain}/api/addNewOrder.html'
         
     async def create_order(self, product_data: Dict) -> Optional[Dict]:

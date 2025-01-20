@@ -1,9 +1,11 @@
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from utils.crm_handler import LpCrmAPI
+from shared.utils.crm_handler import LpCrmAPI
+from shared.utils.csv_handler import read_products
 import logging
 import asyncio
+from shared.config import Config
 
 router = Router()
 crm_api = LpCrmAPI()
@@ -26,7 +28,20 @@ async def create_order_keyboard(product_id: str) -> types.InlineKeyboardMarkup:
 @router.callback_query(lambda c: c.data.startswith('order_'))
 async def process_order(callback: types.CallbackQuery, state: FSMContext):
     product_id = callback.data.split('_')[1]
-    await state.update_data(product_id=product_id)
+    
+    # Получаем информацию о товаре
+    products = read_products()
+    product = next((p for p in products if p.article == product_id), None)
+    
+    if not product:
+        await callback.answer("❌ Товар не найден", show_alert=True)
+        return
+        
+    await state.update_data(
+        product_id=product_id,
+        product_name=product.name,
+        product_price=product.retail_price
+    )
     
     await callback.message.answer(
         "Для оформлення замовлення, будь ласка, введіть ваше ПІБ:"
