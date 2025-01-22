@@ -1,4 +1,4 @@
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from shared.config import Config
 from admin_bot.handlers import post_handlers
@@ -11,6 +11,9 @@ import signal
 import sys
 import os
 from aiogram.client.session.aiohttp import AiohttpSession
+import random
+from admin_bot.context import context
+from admin_bot.keyboards.admin_kb import get_admin_keyboard
 
 # Проверка на запущенные экземпляры
 PID_FILE = 'admin_bot.pid'
@@ -34,32 +37,46 @@ def cleanup():
 
 def signal_handler(signum, frame):
     """Обработчик сигналов для корректного завершения"""
+    print("\n") # Добавляем перенос строки для чистого вывода
     logging.info("Получен сигнал завершения...")
     try:
-        asyncio.get_event_loop().run_until_complete(shutdown(dp))
+        # Создаем новый event loop для корректного завершения
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(shutdown())
     except Exception as e:
         logging.error(f"Ошибка при завершении: {str(e)}")
     finally:
         cleanup()
         sys.exit(0)
 
-# Инициализация
-bot = Bot(token=Config.ADMIN_BOT_TOKEN)
-bot.session = AiohttpSession()
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
-price_tracker = PriceTracker()
-
-# Регистрация хендлеров
-dp.include_router(post_handlers.router)
-
-
 async def main():
     Config.setup_logging('admin')
+    Config.init_directories()
+    
+    # Инициализация бота и диспетчера
+    storage = MemoryStorage()
+    bot = Bot(token=Config.ADMIN_BOT_TOKEN)
+    dp = Dispatcher(storage=storage)
+    
+    # Регистрация роутера
+    dp.include_router(post_handlers.router)
+    
     logging.info("Запуск админ бота...")
     
     try:
         check_running()
+        
+        # Отправляем клавиатуру админам
+        for admin_id in Config.ADMIN_IDS:
+            try:
+                await bot.send_message(
+                    admin_id,
+                    "Бот запущен. Используйте клавиатуру для управления:",
+                    reply_markup=get_admin_keyboard()
+                )
+            except Exception as e:
+                logging.error(f"Не удалось отправить клавиатуру админу {admin_id}: {e}")
         
         file_updater = FileUpdater(
             url=Config.CSV_URL,
@@ -67,37 +84,47 @@ async def main():
             update_interval=Config.UPDATE_INTERVAL
         )
         
-        # Создаем и запускаем задачи
-        tasks = [
-            asyncio.create_task(file_updater.check_updates()),
-            asyncio.create_task(auto_posting(bot)),
-            asyncio.create_task(check_and_delete_outdated_posts(bot))
-        ]
-        
-        # Запускаем бота и задачи одновременно
-        await asyncio.gather(dp.start_polling(bot), *tasks)
+        # Создаем и запускаем задачи с обработкой ошибок
+        tasks = []
+        try:
+            tasks = [
+                asyncio.create_task(file_updater.check_updates()),
+                asyncio.create_task(auto_posting(bot)),
+                asyncio.create_task(check_and_delete_outdated_posts(bot))
+            ]
+            
+            # Запускаем бота и задачи одновременно
+            await asyncio.gather(dp.start_polling(bot), *tasks)
+        except Exception as e:
+            logging.error(f"Ошибка при запуске задач: {str(e)}")
+            for task in tasks:
+                task.cancel()
+            raise
         
     except Exception as e:
         logging.error(f"Критическая ошибка: {str(e)}")
         cleanup()
         raise
 
-async def shutdown(dispatcher: Dispatcher):
+async def shutdown():
     """Корректное завершение работы бота"""
     logging.info("Завершение работы бота...")
     try:
+        # Сначала останавливаем диспетчер
+        await context.dp.stop_polling()
+        
         # Отменяем все задачи
-        for task in asyncio.all_tasks():
-            if task is not asyncio.current_task():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         
         # Закрываем соединения
-        await dispatcher.storage.close()
-        await bot.session.close()
+        await context.shutdown()
+        await context.bot.session.close()
     finally:
         cleanup()
 

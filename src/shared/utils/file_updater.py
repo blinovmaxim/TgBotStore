@@ -4,19 +4,21 @@ import aiohttp
 import asyncio
 from datetime import datetime, timedelta
 import hashlib
+from shared.utils.csv_handler import read_products
+import importlib
+import sys
 
 class FileUpdater:
-    def __init__(self, url: str, local_path: str, update_interval: int = 120):
+    def __init__(self, url: str, local_path: str, update_interval: int = 3600):
         """
         url: URL файла на сайте поставщика
         local_path: путь к локальному файлу
-        update_interval: интервал обновления в секундах (по умолчанию 10 минут)
+        update_interval: интервал обновления в секундах (по умолчанию 1 час)
         """ 
         self.url = url
         self.local_path = local_path
         self.update_interval = update_interval
-        self.last_update = None
-        self.last_hash = None
+        self.last_modified = None
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'text/csv,application/csv,text/plain',
@@ -27,26 +29,33 @@ class FileUpdater:
         }
         
     async def download_file(self) -> bool:
-        """Загружает файл с сайта поставщика"""
+        """Скачивает файл и возвращает True если файл был обновлен"""
         try:
+            # Создаем директорию если её нет
+            os.makedirs(os.path.dirname(self.local_path), exist_ok=True)
+            
             async with aiohttp.ClientSession(headers=self.headers) as session:
-                async with session.get(self.url, allow_redirects=True, ssl=False) as response:
+                async with session.get(self.url) as response:
                     if response.status == 200:
                         content = await response.read()
-                        # Проверяем изменился ли файл
-                        current_hash = hashlib.md5(content).hexdigest()
                         
-                        if self.last_hash != current_hash:
-                            with open(self.local_path, 'wb') as f:
-                                f.write(content)
-                            self.last_hash = current_hash
-                            self.last_update = datetime.now()
-                            logging.info(f"Файл успешно обновлен: {self.local_path}")
-                            return True
-                        return False
+                        # Проверяем, изменился ли файл
+                        if os.path.exists(self.local_path):
+                            with open(self.local_path, 'rb') as f:
+                                old_content = f.read()
+                                if old_content == content:
+                                    return False
+                        
+                        # Сохраняем новый файл
+                        with open(self.local_path, 'wb') as f:
+                            f.write(content)
+                            
+                        logging.info(f"Файл успешно обновлен: {self.local_path}")
+                        return True
                     else:
-                        logging.error(f"Ошибка загрузки файла: {response.status} - {await response.text()}")
+                        logging.error(f"Ошибка при скачивании файла: {response.status}")
                         return False
+                        
         except Exception as e:
             logging.error(f"Ошибка при обновлении файла: {str(e)}")
             return False
@@ -62,10 +71,18 @@ class FileUpdater:
         return datetime.now() - file_datetime > timedelta(seconds=self.update_interval)
     
     async def check_updates(self):
+        """Проверяет обновления файла"""
         while True:
             try:
-                if await self.should_update():
-                    await self.download_file()
+                is_updated = await self.download_file()
+                
+                if is_updated:
+                    # Очищаем кэш и перезагружаем модуль
+                    read_products.cache_clear()
+                    importlib.reload(sys.modules['shared.utils.csv_handler'])
+                    logging.info("Кэш очищен, модуль перезагружен")
+                
             except Exception as e:
                 logging.error(f"Ошибка при проверке обновлений: {str(e)}")
-            await asyncio.sleep(60)  # Проверяем каждую минуту 
+                
+            await asyncio.sleep(self.update_interval) 

@@ -2,7 +2,7 @@ from aiogram import Bot, types
 from shared.config import Config
 from shared.utils.csv_handler import read_products, Product
 from shared.utils.price_tracker import PriceTracker
-from admin_bot.handlers.post_handlers import format_description
+from admin_bot.utils.text_utils import format_description
 import asyncio
 import logging
 import random
@@ -30,7 +30,7 @@ async def auto_posting(bot: Bot):
                     text += f"💰 Нова ціна: {product.retail_price} грн\n"
                     text += f"📉 Економія: {price_diff} грн!\n\n"
                 else:
-                    text += f"💰 Ціна: {product.retail_price} грн\n"
+                    text += f"💰 Ціна: {product.retail_price} грн\n\n"
                 
                 description = format_description(product.description)
                 text += f"📝 Опис:\n{description}\n\n"
@@ -92,8 +92,8 @@ async def auto_posting(bot: Bot):
                 
         except Exception as e:
             logging.error(f"Ошибка автопостинга: {str(e)}")
-            
-        await asyncio.sleep(600)
+        #ставим время( частоту ) постов  - 10 минут
+        await asyncio.sleep(Config.POST_INTERVAL)
 
 async def check_and_delete_outdated_posts(bot: Bot):
     """Проверка и удаление устаревших постов"""
@@ -102,15 +102,18 @@ async def check_and_delete_outdated_posts(bot: Bot):
             products = read_products()
             available_products = {p.article: p for p in products if p.stock == 'instock'}
             
-            # Получаем историю сообщений канала
-            messages = await bot.get_updates()
+            # Получаем последние сообщения из канала
+            messages = await bot.get_updates(
+                offset=-100,  # Получаем последние 100 сообщений
+                allowed_updates=['channel_post']
+            )
+            
             for update in messages:
                 if update.channel_post:
                     message = update.channel_post
                     try:
-                        # Ищем артикул в тексте сообщения
-                        if message.text or message.caption:
-                            text = message.text or message.caption
+                        text = message.text or message.caption
+                        if text:
                             for article in available_products.keys():
                                 if article in text and article not in available_products:
                                     try:
@@ -118,14 +121,12 @@ async def check_and_delete_outdated_posts(bot: Bot):
                                             chat_id=Config.CHANNEL_ID,
                                             message_id=message.message_id
                                         )
-                                        logging.info(f"Удален пост с товаром {article} (нет в наличии)")
+                                        logging.info(f"Удален пост с товаром {article}")
                                     except Exception as del_error:
-                                        logging.error(f"Ошибка при удалении сообщения: {str(del_error)}")
-                                    break
-                    except Exception as msg_error:
-                        logging.error(f"Ошибка при обработке сообщения: {str(msg_error)}")
-                        continue
+                                        logging.error(f"Ошибка удаления: {str(del_error)}")
+                    except Exception as e:
+                        logging.error(f"Ошибка обработки сообщения: {str(e)}")
+                    
         except Exception as e:
-            logging.error(f"Ошибка при проверке устаревших постов: {str(e)}")
-            
-        await asyncio.sleep(172800)  # Проверяем каждые 2 дня 
+            logging.error(f"Ошибка проверки постов: {str(e)}")
+        await asyncio.sleep(Config.UPDATE_INTERVAL)

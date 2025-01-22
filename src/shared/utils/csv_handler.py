@@ -6,6 +6,7 @@ import re
 import os
 import logging
 from functools import lru_cache
+from shared.config import Config
 
 @dataclass
 class Product:
@@ -92,16 +93,12 @@ def calculate_retail_price(drop_price: float, retail_price: float) -> float:
 
 @lru_cache(maxsize=1)
 def read_products(filename: str = None) -> List[Product]:
-    """Читает товары из CSV файла"""
     try:
-        if not filename:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            filename = os.getenv('CSV_FILE', os.path.join(base_dir,'ExportWebskladCSV.csv'))
-            
+        filename = filename or Config.CSV_PATH
         if not os.path.exists(filename):
-            logging.error(f"Файл {filename} не знайдено")
+            logging.error(f"Файл {filename} не найден")
             return []
-
+ 
         products = []
         encodings = ['utf-8', 'windows-1251']
         
@@ -120,7 +117,7 @@ def read_products(filename: str = None) -> List[Product]:
                             continue
                             
                         category = (row.get('Категории товара') or '').strip()
-                        if category and 'электронк' in category.lower():
+                        if category and 'электронки' in category.lower():
                             continue
                             
                         drop_price = parse_price(row.get('Дроп цена для партнера'))
