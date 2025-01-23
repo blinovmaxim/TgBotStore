@@ -13,9 +13,11 @@ async def auto_posting(bot: Bot):
         try:
             products = read_products()
             available_products = [p for p in products if p.stock == 'instock']
+            logging.info(f"Доступно {len(available_products)} товаров для постинга")
             
             if available_products:
                 product = random.choice(available_products)
+                logging.info(f"Выбран товар для поста: {product.name} (Артикул: {product.article})")
                 
                 # Проверяем изменение цены
                 price_tracker = PriceTracker()
@@ -25,12 +27,13 @@ async def auto_posting(bot: Bot):
                 text = f"📦 {product.name}\n\n"
                 
                 # Показываем скидку только если разница больше 100 грн
+                calculated_price = product.get_calculated_price()
                 if price_diff and price_diff >= 100:
-                    text += f"🔥 ЗНИЖКА! Стара ціна: {product.retail_price + price_diff} грн\n"
-                    text += f"💰 Нова ціна: {product.retail_price} грн\n"
+                    text += f"🔥 ЗНИЖКА! Стара ціна: {calculated_price + price_diff} грн\n"
+                    text += f"💰 Нова ціна: {calculated_price} грн\n"
                     text += f"📉 Економія: {price_diff} грн!\n\n"
                 else:
-                    text += f"💰 Ціна: {product.retail_price} грн\n\n"
+                    text += f"💰 Ціна: {calculated_price} грн\n\n"
                 
                 description = format_description(product.description)
                 text += f"📝 Опис:\n{description}\n\n"

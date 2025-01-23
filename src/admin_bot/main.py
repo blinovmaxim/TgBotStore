@@ -35,15 +35,19 @@ def cleanup():
     if os.path.exists(PID_FILE):
         os.remove(PID_FILE)
 
+async def shutdown():
+    """Корректное завершение бота"""
+    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    [task.cancel() for task in tasks]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    
 def signal_handler(signum, frame):
     """Обработчик сигналов для корректного завершения"""
-    print("\n") # Добавляем перенос строки для чистого вывода
     logging.info("Получен сигнал завершения...")
     try:
-        # Создаем новый event loop для корректного завершения
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(shutdown())
+        loop = asyncio.get_event_loop()
+        loop.create_task(shutdown())
+        loop.stop()
     except Exception as e:
         logging.error(f"Ошибка при завершении: {str(e)}")
     finally:
@@ -54,15 +58,16 @@ async def main():
     Config.setup_logging('admin')
     Config.init_directories()
     
-    # Инициализация бота и диспетчера
     storage = MemoryStorage()
     bot = Bot(token=Config.ADMIN_BOT_TOKEN)
     dp = Dispatcher(storage=storage)
-    
-    # Регистрация роутера
     dp.include_router(post_handlers.router)
     
     logging.info("Запуск админ бота...")
+    
+    # Регистрируем обработчики сигналов
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     
     try:
         check_running()
@@ -78,57 +83,32 @@ async def main():
             except Exception as e:
                 logging.error(f"Не удалось отправить клавиатуру админу {admin_id}: {e}")
         
+        # Сначала инициализируем и запускаем FileUpdater
         file_updater = FileUpdater(
             url=Config.CSV_URL,
             local_path=Config.CSV_PATH,
             update_interval=Config.UPDATE_INTERVAL
         )
         
-        # Создаем и запускаем задачи с обработкой ошибок
-        tasks = []
-        try:
-            tasks = [
-                asyncio.create_task(file_updater.check_updates()),
-                asyncio.create_task(auto_posting(bot)),
-                asyncio.create_task(check_and_delete_outdated_posts(bot))
-            ]
+        # Выполняем первичную проверку
+        if not await file_updater.initial_check():
+            logging.error("Не удалось инициализировать файл товаров")
+            return
             
-            # Запускаем бота и задачи одновременно
-            await asyncio.gather(dp.start_polling(bot), *tasks)
-        except Exception as e:
-            logging.error(f"Ошибка при запуске задач: {str(e)}")
-            for task in tasks:
-                task.cancel()
-            raise
+        # Запускаем все задачи параллельно
+        tasks = [
+            dp.start_polling(bot),
+            auto_posting(bot),
+            check_and_delete_outdated_posts(bot),
+            file_updater.check_updates()
+        ]
         
+        await asyncio.gather(*tasks)
+            
     except Exception as e:
         logging.error(f"Критическая ошибка: {str(e)}")
         cleanup()
         raise
 
-async def shutdown():
-    """Корректное завершение работы бота"""
-    logging.info("Завершение работы бота...")
-    try:
-        # Сначала останавливаем диспетчер
-        await context.dp.stop_polling()
-        
-        # Отменяем все задачи
-        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-        for task in tasks:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-        
-        # Закрываем соединения
-        await context.shutdown()
-        await context.bot.session.close()
-    finally:
-        cleanup()
-
 if __name__ == "__main__":
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
     asyncio.run(main()) 
