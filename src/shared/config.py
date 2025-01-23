@@ -51,12 +51,6 @@ class Config:
             os.makedirs(logs_dir)
             logging.info(f"Создана директория: {logs_dir}")
         
-        # Проверяем CSV файл
-        csv_path = os.path.join(data_dir, "ExportWebskladCSV.csv")
-        if os.path.exists(csv_path):
-            logging.info(f"CSV файл найден: {csv_path}")
-        else:
-            logging.warning(f"CSV файл не найден: {csv_path}")
 
     def setup_logging(cls, bot_type: str = 'main'):
         logging.basicConfig(
@@ -82,8 +76,9 @@ class Config:
             'CLIENT_BOT_TOKEN': cls.CLIENT_BOT_TOKEN,
             'CHANNEL_ID': cls.CHANNEL_ID,
             'ADMIN_IDS': cls.ADMIN_IDS,
+            'CSV_PATH': os.path.exists(cls.CSV_PATH)
         }
         
         missing = [k for k, v in required_vars.items() if not v]
         if missing:
-            raise ValueError(f"Отсутствуют обязательные переменные: {', '.join(missing)}") 
+            raise ValueError(f"Отсутствуют обязательные переменные или файлы: {', '.join(missing)}") 

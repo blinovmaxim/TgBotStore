@@ -39,17 +39,22 @@ class FileUpdater:
                     if response.status == 200:
                         content = await response.read()
                         
-                        # Проверяем, изменился ли файл
-                        if os.path.exists(self.local_path):
-                            with open(self.local_path, 'rb') as f:
-                                old_content = f.read()
-                                if old_content == content:
-                                    return False
+                        # Если файла нет - сразу сохраняем
+                        if not os.path.exists(self.local_path):
+                            with open(self.local_path, 'wb') as f:
+                                f.write(content)
+                            logging.info(f"Файл успешно создан: {self.local_path}")
+                            return True
                         
-                        # Сохраняем новый файл
+                        # Если файл есть - проверяем изменения
+                        with open(self.local_path, 'rb') as f:
+                            old_content = f.read()
+                            if old_content == content:
+                                return False
+                        
+                        # Сохраняем обновленный файл
                         with open(self.local_path, 'wb') as f:
                             f.write(content)
-                            
                         logging.info(f"Файл успешно обновлен: {self.local_path}")
                         return True
                     else:
@@ -68,21 +73,68 @@ class FileUpdater:
         file_time = os.path.getmtime(self.local_path)
         file_datetime = datetime.fromtimestamp(file_time)
         
-        return datetime.now() - file_datetime > timedelta(seconds=self.update_interval)
+        # Добавляем проверку на первый запуск
+        if not hasattr(self, '_last_check'):
+            self._last_check = datetime.now()
+            return False
+        
+        time_diff = datetime.now() - file_datetime
+        return time_diff > timedelta(seconds=self.update_interval)
     
     async def check_updates(self):
         """Проверяет обновления файла"""
         while True:
             try:
-                is_updated = await self.download_file()
+                if not os.path.exists(self.local_path):
+                    is_updated = await self.download_file()
+                    if not is_updated:
+                        logging.error("Не удалось загрузить файл")
+                        await asyncio.sleep(self.update_interval)
+                        continue
+                        
+                    await asyncio.sleep(5)
+                    products = read_products()
+                    if not products:
+                        logging.error("Файл загружен, но не удалось прочитать товары")
+                        await asyncio.sleep(self.update_interval)
+                        continue
+                        
+                    logging.info(f"Файл успешно загружен. Товаров: {len(products)}")
+                    
+                # Если файл есть - проверяем обновления
+                if await self.should_update():
+                    is_updated = await self.download_file()
+                    if is_updated:
+                        await asyncio.sleep(5)  # Ждем полной загрузки
+                        read_products.cache_clear()
+                        importlib.reload(sys.modules['shared.utils.csv_handler'])
+                        logging.info("Кэш очищен, модуль перезагружен")
                 
-                if is_updated:
-                    # Очищаем кэш и перезагружаем модуль
-                    read_products.cache_clear()
-                    importlib.reload(sys.modules['shared.utils.csv_handler'])
-                    logging.info("Кэш очищен, модуль перезагружен")
+                await asyncio.sleep(self.update_interval)
                 
             except Exception as e:
                 logging.error(f"Ошибка при проверке обновлений: {str(e)}")
-                
-            await asyncio.sleep(self.update_interval) 
+                await asyncio.sleep(self.update_interval)
+
+    async def initial_check(self):
+        """Первичная проверка и загрузка файла"""
+        try:
+            if not os.path.exists(self.local_path):
+                is_updated = await self.download_file()
+                if not is_updated:
+                    logging.error("Не удалось загрузить файл")
+                    return False
+                    
+                await asyncio.sleep(5)
+                products = read_products()
+                if not products:
+                    logging.error("Файл загружен, но не удалось прочитать товары")
+                    return False
+                    
+                logging.info(f"Файл успешно загружен. Товаров: {len(products)}")
+                return True
+            return True
+            
+        except Exception as e:
+            logging.error(f"Ошибка при начальной проверке: {str(e)}")
+            return False 
